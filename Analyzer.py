@@ -66,7 +66,7 @@ async def create_model(training_data):
         y.append(label)
 
     # x = np.array(x).reshape(-1, IMG_SIZE, IMG_SIZE, 1)
-
+    todo reshapen!
     print(np.array(x).reshape(IMG_SIZE, IMG_SIZE))
 
     model = { "x" : x,
