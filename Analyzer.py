@@ -115,10 +115,20 @@ async def create_model(training_data_grey, training_data_rgb):
 
     return model_grey, model_rgb
 
+async def standardize(model):
+    # standard score, z-tranformation
+    # Z = (X - E(X)) / Standardabweichung // https://en.wikipedia.org/wiki/Standard_score
+    model -= np.mean(model, axis=0)
+    model /= np.std(model, axis=0)
+    print("standatisiere")
+    print(model)
+    return model
 
 async def normalize_model(input_model_grey, input_model_rgb):
-    todo normalize dis!!
-    input_model_grey["x"] = input_model_grey["x"] / 255
+
+    print(input_model_grey["x"] / 255)
+    print("---------------------------")
+    input_model_grey["x"] = await standardize(input_model_grey["x"])
     model_grey = Sequential()
     model_grey.add(Conv2D(256, (3, 3), input_shape=input_model_grey["x"].shape[1:]))
     model_grey.add(Activation('relu'))
@@ -131,7 +141,7 @@ async def normalize_model(input_model_grey, input_model_rgb):
     model_grey.add(Dense(1))
     model_grey.add(Activation('sigmoid'))
 
-    input_model_rgb["x"] =
+    input_model_rgb["x"] = await standardize(input_model_rgb["x"])
     model_rgb = Sequential()
     model_rgb.add(Conv2D(256, (3, 3), input_shape=input_model_rgb["x"].shape[1:]))
     model_rgb.add(Activation('relu'))

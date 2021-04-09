@@ -136,6 +136,7 @@ class Controller(Subscriber):
         self.view = View(self.root, self.model, ['prepare_training_data',
                                                  'create_model',
                                                  'save_model',
+                                                 'train_model_routine',
                                                  'load_model',
                                                  'close_button'], 'viewer')
 
@@ -143,8 +144,13 @@ class Controller(Subscriber):
         self.view.register('prepare_training_data', self)  # Achtung, sich selbst angeben und nicht self.controller
         self.view.register('create_model', self)  # Achtung, sich selbst angeben und nicht self.controller
         self.view.register('save_model', self)  # Achtung, sich selbst angeben und nicht self.controller
+        self.view.register('train_model_routine', self)
         self.view.register('load_model', self)
         self.view.register('close_button', self)
+
+        #init Observer
+        self.model.register('data_changed', self.view) # Achtung, sich selbst angeben und nicht self.controller
+        self.model.register('clear_data', self.view)
 
     def update(self, event, message):
         self.view.write_gui_log("{} button clicked...".format(event))
@@ -206,6 +212,7 @@ class Controller(Subscriber):
     async def generic_task(self, name):
         raise Exception('No model_grey.{} method'.format(name))
 
+
 class View(Publisher, Subscriber):
     def __init__(self, parent, model, events, name):
         Publisher.__init__(self, events)
@@ -218,9 +225,7 @@ class View(Publisher, Subscriber):
         self.frame.grid(sticky="NSEW")
         self.main = Main(parent)
 
-        #init Observer
-        self.model.register('data_changed', self) # Achtung, sich selbst angeben und nicht self.controller
-        self.model.register('clear_data', self)
+
 
         # hidden and shown widgets
         self.hiddenwidgets = {}
@@ -280,7 +285,6 @@ class View(Publisher, Subscriber):
         if event == "data_changed":
             self.write_gui_log("{}".format(message))
 
-
     def update_plot(self):
         #todo am besten eine funktion starten, die diese infors kriegt und dann im view ändert
         self.canvas = FigureCanvasTkAgg(self.model.fig, master=self.frame)
@@ -290,6 +294,7 @@ class View(Publisher, Subscriber):
         time_now = datetime.now().strftime("%d-%b-%Y (%H:%M:%S)")
         self.sidePanel.log.insert("end", str(time_now) + ': ' + text)
         self.sidePanel.log.yview("end")
+
 
 class Main(tk.Frame):
     def __init__(self, root, **kw):
@@ -343,6 +348,7 @@ class Main(tk.Frame):
         #button save model_grey
         self.load_model_button = tk.Button(self.mainFrame, text="Load Model", width=30, borderwidth=5, bg='#FBD975')
         self.load_model_button.grid(row = 11, column = 1, sticky = tk.N, pady = 0)
+
 
 class InfoBottomPanel(tk.Frame):
     def __init__(self, root, **kw):
