@@ -130,28 +130,45 @@ async def normalize_model(input_model_grey, input_model_rgb):
     print("---------------------------")
     input_model_grey["x"] = await standardize(input_model_grey["x"])
     model_grey = Sequential()
+
     model_grey.add(Conv2D(256, (3, 3), input_shape=input_model_grey["x"].shape[1:]))
     model_grey.add(Activation('relu'))
+
     model_grey.add(MaxPooling2D(pool_size=(2, 2)))
     model_grey.add(Conv2D(256, (3, 3)))
     model_grey.add(Activation('relu'))
+
     model_grey.add(MaxPooling2D(pool_size=(2, 2)))
+
     model_grey.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
+
     model_grey.add(Dense(64))
+
     model_grey.add(Dense(1))
+
     model_grey.add(Activation('sigmoid'))
 
+    ################################
+
     input_model_rgb["x"] = await standardize(input_model_rgb["x"])
+
     model_rgb = Sequential()
+
     model_rgb.add(Conv2D(256, (3, 3), input_shape=input_model_rgb["x"].shape[1:]))
     model_rgb.add(Activation('relu'))
+
     model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
     model_rgb.add(Conv2D(256, (3, 3)))
     model_rgb.add(Activation('relu'))
+
     model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
+
     model_rgb.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
+
     model_rgb.add(Dense(64))
+
     model_rgb.add(Dense(1))
+
     model_rgb.add(Activation('sigmoid'))
 
     model_rgb = {"model": model_grey,
