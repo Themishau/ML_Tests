@@ -68,7 +68,7 @@ class Model(Publisher):
     async def train_model_routine(self, name):
         await self.set_process(name)
         await self.normalize_model()
-        await self.train_model()
+        # await self.train_model()
         await self.delete_process()
 
     async def normalize_model(self):

@@ -17,6 +17,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten
 from tensorflow.keras.layers import Conv2D, MaxPooling2D
+from tensorflow.keras.layers.experimental.preprocessing import Normalization
 
 import pickle
 
@@ -118,15 +119,27 @@ async def create_model(training_data_grey, training_data_rgb):
 async def standardize(model):
     # standard score, z-tranformation
     # Z = (X - E(X)) / Standardabweichung // https://en.wikipedia.org/wiki/Standard_score
-    model -= np.mean(model, axis=0)
-    model /= np.std(model, axis=0)
-    print("standatisiere")
-    print(model)
-    return model
+    mean = np.mean(model, axis=0)
+    std = np.std(model, axis=0)
+    model_trans = model - mean # -= does not work because they need to be the same type
+    model_trans = model_trans / std
+    # you want to save your mean and std for more data
+
+    return model_trans
+
+async def normalize(model):
+    # normalization
+    max = np.amax(model, axis=0)
+    min = np.amin(model, axis=0)
+
+    model_trans = (model - min) / (max - min)
+    return model_trans
 
 async def normalize_model(input_model_grey, input_model_rgb):
 
-    print(input_model_grey["x"] / 255)
+
+
+    print("---------------------------")
     print("---------------------------")
     input_model_grey["x"] = await standardize(input_model_grey["x"])
     model_grey = Sequential()
@@ -149,8 +162,15 @@ async def normalize_model(input_model_grey, input_model_rgb):
     model_grey.add(Activation('sigmoid'))
 
     ################################
-
+    print("-------------normalize--------------")
+    print(await normalize(input_model_rgb["x"]))
     input_model_rgb["x"] = await standardize(input_model_rgb["x"])
+    print("---------------------------")
+    print("-------------input_model_rgb--------------")
+    print(input_model_rgb["x"])
+
+    print("---------------------------")
+    print("---------------------------")
 
     model_rgb = Sequential()
 
@@ -172,7 +192,7 @@ async def normalize_model(input_model_grey, input_model_rgb):
     model_rgb.add(Activation('sigmoid'))
 
     model_rgb = {"model": model_grey,
-                 "x": input_model_rgb["x"],
+                 "x": input_model_grey["x"],
                  "y": input_model_grey["y"]}
 
     model_grey = {"model": model_rgb,
