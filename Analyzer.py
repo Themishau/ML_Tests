@@ -18,13 +18,67 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten
 from tensorflow.keras.layers import Conv2D, MaxPooling2D
 from tensorflow.keras.layers.experimental.preprocessing import Normalization
+from tensorflow.keras.callbacks import TensorBoard
+from tensorflow.keras.models import load_model
 
 import pickle
-
+# tensorboard --logdir=logs/
+NAME = "CNN_FHDW"
 IMG_SIZE = 125
+_globalgpu = None
 
 
-async def create_training_data(categories, data_path):
+def set_gpu():
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+
+def init_gpu():
+    # set GPU memory which can be used for object detection
+    config = tf.compat.v1.ConfigProto(gpu_options=
+                                      tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.7)
+                                      # device_count = {'GPU': 1}
+                                      )
+    # config = tf.compat.v1.ConfigProto()
+    config.gpu_options.allow_growth = True
+    globalgpu = tf.compat.v1.Session(config=config)
+    return globalgpu
+
+
+async def shuffle_training_data(training_data):
+    random.shuffle(training_data)
+    return training_data
+
+
+async def standardize(model):
+    # standard score, z-tranformation
+    # Z = (X - E(X)) / Standardabweichung // https://en.wikipedia.org/wiki/Standard_score
+    mean = np.mean(model, axis=0)
+    std = np.std(model, axis=0)
+    model_trans = model - mean # -= does not work because they need to be the same type
+    model_trans = model_trans / std
+    # you want to save your mean and std for more data
+    return model_trans
+
+
+async def normalize(model):
+    # normalization
+    max = np.amax(model, axis=0)
+    min = np.amin(model, axis=0)
+
+    model_trans = (model - min) / (max - min)
+    return model_trans
+
+
+async def create_training_data_grey(categories, data_path):
     training_data_grey = []
     for category in categories:
         path = os.path.join(data_path, category)
@@ -66,12 +120,7 @@ async def create_training_data_rgb(categories, data_path):
     return training_data_rbg
 
 
-async def shuffle_training_data(training_data):
-    random.shuffle(training_data)
-    return training_data
-
-
-async def create_model(training_data_grey, training_data_rgb):
+async def prepare_training_data_np(training_data_grey, training_data_rgb):
     X_grey = []
     y_grey = []
     X_rgb = []
@@ -80,14 +129,15 @@ async def create_model(training_data_grey, training_data_rgb):
     for features, label in training_data_grey:
         X_grey.append(features)
         y_grey.append(label)
+    y_grey = np.array(y_grey)
 
     for features, label in training_data_rgb:
         X_rgb.append(features)
         y_rgb.append(label)
+    y_rgb = np.array(y_rgb) # we need a numpy array
 
     # print(np.array(X))
-    print(np.array(X_grey).shape)
-    print(np.array(X_rgb).shape)
+
 
     # Reduktion der "Dimensionen" eines Arrays für die
     # (24946, 125, 125)
@@ -116,161 +166,173 @@ async def create_model(training_data_grey, training_data_rgb):
 
     return model_grey, model_rgb
 
-async def standardize(model):
-    # standard score, z-tranformation
-    # Z = (X - E(X)) / Standardabweichung // https://en.wikipedia.org/wiki/Standard_score
-    mean = np.mean(model, axis=0)
-    std = np.std(model, axis=0)
-    model_trans = model - mean # -= does not work because they need to be the same type
-    model_trans = model_trans / std
-    # you want to save your mean and std for more data
 
-    return model_trans
-
-async def normalize(model):
-    # normalization
-    max = np.amax(model, axis=0)
-    min = np.amin(model, axis=0)
-
-    model_trans = (model - min) / (max - min)
-    return model_trans
-
-async def normalize_model(input_model_grey, input_model_rgb):
-
-
+async def normalize_model_grey(input_data_grey):
 
     print("---------------------------")
     print("---------------------------")
-    input_model_grey["x"] = await standardize(input_model_grey["x"])
+    input_data_grey["x"] = await standardize(input_data_grey["x"])
     model_grey = Sequential()
-
-    model_grey.add(Conv2D(256, (3, 3), input_shape=input_model_grey["x"].shape[1:]))
+    # model_grey_x = tf.random.normal(input_data_grey["x"])
+    # model_grey_y = tf.keras.layers.Conv2D(2, 3, activation='relu', input_shape=input_data_grey["x"][1:])(input_data_grey["x"])
+    model_grey.add(Conv2D(256, (3, 3), input_shape=input_data_grey["x"].shape[1:]))
     model_grey.add(Activation('relu'))
-
     model_grey.add(MaxPooling2D(pool_size=(2, 2)))
+
     model_grey.add(Conv2D(256, (3, 3)))
     model_grey.add(Activation('relu'))
-
     model_grey.add(MaxPooling2D(pool_size=(2, 2)))
 
     model_grey.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
 
     model_grey.add(Dense(64))
+    model_grey.add(Activation('relu'))
 
     model_grey.add(Dense(1))
-
     model_grey.add(Activation('sigmoid'))
 
-    ################################
-    print("-------------normalize--------------")
-    print(await normalize(input_model_rgb["x"]))
-    input_model_rgb["x"] = await standardize(input_model_rgb["x"])
-    print("---------------------------")
-    print("-------------input_model_rgb--------------")
-    print(input_model_rgb["x"])
+    data = {"x": input_data_grey["x"],
+            "y": input_data_grey["y"]}
 
+
+    return data, model_grey
+
+
+async def normalize_model_rgb(input_data_rgb):
+    ################################
+    # print("-------------normalize--------------")
+    # print(await normalize(input_data_rgb["x"]))
+    input_data_rgb["x"] = await standardize(input_data_rgb["x"])
+    # print("---------------------------")
+    # print("-------------input_data_rgb--------------")
+    # print(input_data_rgb["x"])
+
+    print("---------------------------")
+    print("---------------------------")
+    print("inputshape: {} \n "
+          "shape.[1:]: {}".format(input_data_rgb["x"].shape, input_data_rgb["x"].shape[1:]))
     print("---------------------------")
     print("---------------------------")
 
     model_rgb = Sequential()
-
-    model_rgb.add(Conv2D(256, (3, 3), input_shape=input_model_rgb["x"].shape[1:]))
+    model_rgb.add(Conv2D(64, (3, 3), input_shape=input_data_rgb["x"].shape[1:]))
     model_rgb.add(Activation('relu'))
-
     model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
-    model_rgb.add(Conv2D(256, (3, 3)))
-    model_rgb.add(Activation('relu'))
 
+    model_rgb.add(Conv2D(64, (2, 3)))
+    model_rgb.add(Activation('relu'))
     model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
 
     model_rgb.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
 
     model_rgb.add(Dense(64))
+    model_rgb.add(Activation('relu'))
 
     model_rgb.add(Dense(1))
-
     model_rgb.add(Activation('sigmoid'))
 
-    model_rgb = {"model": model_grey,
-                 "x": input_model_grey["x"],
-                 "y": input_model_grey["y"]}
+    data = {"x": input_data_rgb["x"],
+            "y": input_data_rgb["y"]}
 
-    model_grey = {"model": model_rgb,
-                  "x": input_model_rgb["x"],
-                  "y": input_model_rgb["y"]}
-
-    return model_grey, model_rgb
+    return data, model_rgb
 
 
-async def train_model(input_model_grey, input_model_rgb):
-    input_model_grey["model"].compile(loss='binary_crossentropy',
+async def train_model_grey(input_data_grey, model):
+    print("input_data_grey[x]: {} \n".format(input_data_grey["x"].shape))
+    tensorboard_grey = TensorBoard(log_dir="logs/{}".format(NAME + "_grey"))
+
+    model.compile(loss='binary_crossentropy',
                                       optimizer='adam',
                                       metrics=['accuracy'])
 
-    input_model_grey.fit(input_model_grey["x"], input_model_grey["y"], batch_size=32, epochs=3, validation_split=0.3)
+    model.fit(input_data_grey["x"],
+                   input_data_grey["y"],
+                   batch_size=32, epochs=10, validation_split=0.3, callbacks=[tensorboard_grey])
+    print("grey done")
+    return model
 
-    input_model_rgb["model"].compile(loss='binary_crossentropy',
+
+async def train_model_rgb(input_data_rgb, model):
+    print("input_data_rgb[x]:  {} \n".format(input_data_rgb["x"].shape))
+    tensorboard_rgb = TensorBoard(log_dir="logs/{}".format(NAME + "_rgb"))
+
+    model.compile(loss='binary_crossentropy',
                             optimizer='adam',
                             metrics=['accuracy'])
+    model.fit(input_data_rgb["x"],
+                  input_data_rgb["y"],
+                  batch_size=32, epochs=10, validation_split=0.3, callbacks=[tensorboard_rgb])
+    print("rgb done")
 
-    input_model_rgb.fit(input_model_rgb["x"], input_model_rgb["y"], batch_size=32, epochs=3, validation_split=0.3)
+    return model
 
 
-async def save_model(model, name):
-    print(model["y"])
+#### save and load methods ####
 
-    with open("{}_x.pickle".format(name), "wb") as pickle_out:
+async def save_model_training_data(model, name):
+    with open("{}_training_x.pickle".format(name), "wb") as pickle_out:
         pickle.dump(model["x"], pickle_out)
 
-    with open("{}_y.pickle".format(name), "wb") as pickle_out:
+    with open("{}_training_y.pickle".format(name), "wb") as pickle_out:
         pickle.dump(model["y"], pickle_out)
 
 
-async def load_model(name):
-    with open("{}_x.pickle".format(name), "rb") as pickle_in:
+async def save_normalized_model(model, data, name):
+    with open("{}_normalized_x.pickle".format(name), "wb") as pickle_out:
+        pickle.dump(data["x"], pickle_out)
+    with open("{}_normalized_y.pickle".format(name), "wb") as pickle_out:
+        pickle.dump(data["y"], pickle_out)
+    model.save('{}_normalized_model.h5'.format(name))
+
+
+async def save_trained_model(model, name):
+    model.save('{}_trained_model.h5'.format(name))
+
+
+async def load_model_training_data(name):
+    with open("{}_training_x.pickle".format(name), "rb") as pickle_in:
         x = pickle.load(pickle_in)
 
-    with open("{}_y.pickle".format(name), "rb") as pickle_in:
+    with open("{}_training_y.pickle".format(name), "rb") as pickle_in:
         y = pickle.load(pickle_in)
 
     model = {"x": x,
              "y": y,
              }
-
     return model
 
 
-def createplot(datax, datay, datadict, output_path):
-    print("creating plot")
-    fig, ax = plt.subplots(figsize=(5, 5))  # Create a figure and an axes.
-    ax.plot(datax, datay, label='linear')  # Plot some data on the axes.
-    # ax.plot(x, x ** 2, label='quadratic')  # Plot more data on the axes...
-    # ax.plot(x, x ** 3, label='cubic')  # ... and some more.
-    ax.set_xlabel('x label')  # Add an x-label to the axes.
-    ax.set_ylabel('y label')  # Add a y-label to the axes.
-    ax.set_title("DATA")  # Add a title to the axes.
-    ax.legend()  # Add a legend.
-    plt.grid(axis='both', color='0.95')
-    fig.savefig(output_path + 'dfdataPLOT.png')
+async def load_normalized_model(name):
+    with open("{}_normalized_x.pickle".format(name), "rb") as pickle_in:
+        x = pickle.load(pickle_in)
 
-    # plt.show()
-    dfdata = pd.DataFrame.from_dict(datadict)
-    dfdata.to_csv(output_path + 'sorted_data.csv', header=True, quotechar=' ', index=True, sep=';', mode='a',
-                  encoding='utf8')
-    return fig, ax
-    # self.view.plt.plot([1, 2, 3, 4])
-    # self.view.plt.ylabel('some numbers')
-    # self.view.plt.show()
+    with open("{}_normalized_y.pickle".format(name), "rb") as pickle_in:
+        y = pickle.load(pickle_in)
+
+    model = load_model('{}_normalized_model.h5'.format(name))
+
+    data = {
+             "x": x,
+             "y": y,
+             }
+
+    return model, data
 
 
-def create_img(Image):
-    return
-    # display(Image.fromarray(image_np))
-    # plt.figure(figsize=IMAGE_SIZE)
-    # plt.imshow(image_np)
-    # # plt.show(output_dict)
-    # # plt.show()
+async def load_trained_model(name):
+    with open("{}_normalized_x.pickle".format(name), "rb") as pickle_in:
+        x = pickle.load(pickle_in)
+
+    with open("{}_normalized_y.pickle".format(name), "rb") as pickle_in:
+        y = pickle.load(pickle_in)
+    model = load_model('{}_trained_model.h5'.format(name))
+    data = {
+             "x": x,
+             "y": y,
+             }
+
+    return model, data
 
 
-def analyze_data(training_data):
-    return
+
+

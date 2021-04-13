@@ -2,30 +2,39 @@
 import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
-from Analyzer import create_training_data, create_training_data_rgb, shuffle_training_data
-from Analyzer import create_model, normalize_model, train_model, save_model, load_model
+from Analyzer import create_training_data_grey, create_training_data_rgb, shuffle_training_data
+from Analyzer import prepare_training_data_np, normalize_model_grey, normalize_model_rgb, train_model_grey, train_model_rgb
+from Analyzer import save_model_training_data, load_normalized_model, load_trained_model, init_gpu
+from Analyzer import save_trained_model, save_normalized_model, load_model_training_data
 from observer import Publisher, Subscriber
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import asyncio
 import threading
 import time
 
+
 class Model(Publisher):
     def __init__(self, events):
         super().__init__(events)
-        self.input_data = None
-        self.training_data_grey = None
-        self.training_data_rgb = None
-        self.categories = [ 'Cat', 'Dog']
-        self.model_grey = None
-        self.model_rgb = None
-        self.processing = None
-
-        self.fig = None
-        self.ax = None
+        # init gpu
+        self.gpu_session = init_gpu()
 
         self.input_path = None
         self.output_path = None
+        self.input_data = None
+
+        self.training_data_grey = None
+        self.training_data_rgb = None
+        self.categories = [ 'Cat', 'Dog']
+
+        self.model_grey = None
+        self.model_rgb = None
+
+        self.processing = None
+
+    def restart_session(self):
+        self.gpu_session.close()
+        self.gpu_session = init_gpu()
 
     def clearData(self):
         self.input_data = None
@@ -46,7 +55,7 @@ class Model(Publisher):
             return
         self.training_data_grey = None
         await self.set_process("GREY_Model")
-        self.training_data_grey = await create_training_data(self.categories, self.input_path)
+        self.training_data_grey = await create_training_data_grey(self.categories, self.input_path)
         self.training_data_rgb = None
         await self.set_process("RGB_Model")
         self.training_data_rgb = await create_training_data_rgb(self.categories, self.input_path)
@@ -59,53 +68,98 @@ class Model(Publisher):
         self.training_data_grey = await shuffle_training_data(self.training_data_grey)
         self.training_data_rgb = await shuffle_training_data(self.training_data_rgb)
 
+    async def prepare_training_data_np(self):
+        if self.training_data_grey is not None\
+                and self.training_data_rgb is not None:
+            self.training_data_grey, self.training_data_rgb = await prepare_training_data_np(self.training_data_grey, self.training_data_rgb)
+        else:
+            messagebox.showerror('Error', 'no training data available')
+
+    async def normalize_model(self):
+        self.restart_session()
+        self.training_data_grey, self.model_grey = await normalize_model_grey(self.training_data_grey)
+        self.restart_session()
+        self.training_data_rgb, self.model_rgb = await normalize_model_rgb(self.training_data_rgb)
+
+    async def train_model(self):
+        self.restart_session()
+        self.model_grey = await train_model_grey(self.training_data_grey, self.model_grey)
+        self.restart_session()
+        self.model_rgb = await train_model_rgb(self.training_data_rgb, self.model_rgb)
+
     async def prepare_training_data(self, name):
         await self.set_process(name)
         await self.create_training_data()
         await self.shuffle_training_data()
+        await self.prepare_training_data_np()
+        await self.delete_process()
+
+    async def normalize_model_routine(self, name):
+        await self.set_process(name)
+        await self.normalize_model()
         await self.delete_process()
 
     async def train_model_routine(self, name):
         await self.set_process(name)
-        await self.normalize_model()
-        # await self.train_model()
+        await self.train_model()
         await self.delete_process()
 
-    async def normalize_model(self):
-        await self.set_process("normalize_model")
-        self.model_grey, self.model_rgb = await normalize_model(self.model_grey, self.model_rgb)
-        await self.delete_process()
-
-    async def train_model(self):
-        self.model_grey, self.model_rgb = await train_model(self.model_grey, self.model_rgb)
-
-    async def create_model(self, name):
-        await self.set_process(name)
-        if self.training_data_grey is not None\
-                and self.training_data_rgb is not None:
-            self.model_grey, self.model_rgb = await create_model(self.training_data_grey, self.training_data_rgb)
-        else:
-            messagebox.showerror('Error', 'no training data available')
-
-        await self.delete_process()
-
-    async def save_model(self, name):
-        if self.model_grey is not None:
+    async def save_model_training_data(self, name):
+        if self.training_data_grey is not None:
             await self.set_process(name)
-            await save_model(self.model_grey, "grey")
-            await save_model(self.model_rgb, "rgb")
+            await save_model_training_data(self.training_data_grey, "grey")
+            await save_model_training_data(self.training_data_rgb, "rgb")
             await self.delete_process()
         else:
             messagebox.showerror('Error', 'no model_grey available')
 
-    async def load_model(self, name):
+    async def save_normalized_model(self, name):
+        if self.model_rgb is not None:
+            await self.set_process(name)
+            await save_normalized_model(self.model_grey, self.training_data_grey, 'grey')
+            await save_normalized_model(self.model_rgb, self.training_data_rgb, 'rgb')
+            await self.delete_process()
+        else:
+            messagebox.showerror('Error', 'no model_grey available')
+
+    async def save_trained_model(self, name):
+        if self.model_rgb is not None:
+            await self.set_process(name)
+            await save_trained_model(self.model_grey, 'grey')
+            await save_trained_model(self.model_rgb, 'rgb')
+            await self.delete_process()
+        else:
+            messagebox.showerror('Error', 'no model_grey available')
+
+    async def load_model_training_data(self, name):
+        self.training_data_grey = None
+        await self.set_process(name + "_grey")
+        self.training_data_grey = await load_model_training_data("grey")
+        await self.delete_process()
+        self.training_data_rgb = None
+        await self.set_process(name + "_rgb")
+        self.training_data_rgb = await load_model_training_data("rgb")
+        await self.delete_process()
+
+    async def load_normalized_model(self, name):
+        self.model_grey, self.training_data_grey = None, None
+        await self.set_process(name + "_grey")
+        self.model_grey, self.training_data_grey = await load_normalized_model("grey")
+        await self.delete_process()
+
+        self.model_rgb, self.training_data_rgb = None, None
+        await self.set_process(name + "_rgb")
+        self.model_rgb, self.training_data_rgb = await load_normalized_model("rgb")
+        await self.delete_process()
+
+    async def load_trained_model(self, name):
         self.model_grey = None
         await self.set_process(name + "_grey")
-        self.model_grey = await load_model("grey")
+        self.model_grey, self.training_data_grey = await load_trained_model("grey")
         await self.delete_process()
         self.model_rgb = None
         await self.set_process(name + "_rgb")
-        self.model_rgb = await load_model("rgb")
+        self.model_rgb, self.training_data_rgb = await load_trained_model("rgb")
         await self.delete_process()
 
     async def set_process(self, task):
@@ -134,18 +188,29 @@ class Controller(Subscriber):
         #init model_grey and viewer with publisher
         self.model = Model(['data_changed', 'clear_data'])
         self.view = View(self.root, self.model, ['prepare_training_data',
-                                                 'create_model',
-                                                 'save_model',
+                                                 'save_model_training_data',
+                                                 'save_normalized_model',
+                                                 'save_trained_model',
                                                  'train_model_routine',
-                                                 'load_model',
+                                                 'normalize_model_routine',
+                                                 'load_model_training_data',
+                                                 'load_normalized_model',
+                                                 'load_trained_model',
                                                  'close_button'], 'viewer')
 
         #init Observer
         self.view.register('prepare_training_data', self)  # Achtung, sich selbst angeben und nicht self.controller
-        self.view.register('create_model', self)  # Achtung, sich selbst angeben und nicht self.controller
-        self.view.register('save_model', self)  # Achtung, sich selbst angeben und nicht self.controller
+        self.view.register('normalize_model_routine', self)
         self.view.register('train_model_routine', self)
-        self.view.register('load_model', self)
+
+        self.view.register('save_model_training_data', self)  # Achtung, sich selbst angeben und nicht self.controller
+        self.view.register('save_normalized_model', self)  # Achtung, sich selbst angeben und nicht self.controller
+        self.view.register('save_trained_model', self)  # Achtung, sich selbst angeben und nicht self.controller
+
+        self.view.register('load_model_training_data', self)
+        self.view.register('load_normalized_model', self)
+        self.view.register('load_trained_model', self)
+
         self.view.register('close_button', self)
 
         #init Observer
@@ -202,7 +267,6 @@ class Controller(Subscriber):
         self.runningAsync = self.runningAsync - 1
 
     async def task(self, task):
-
         # create an generic method call
         # self.model_grey -> model_grey
         # self       -> controller
@@ -225,16 +289,21 @@ class View(Publisher, Subscriber):
         self.frame.grid(sticky="NSEW")
         self.main = Main(parent)
 
-
-
         # hidden and shown widgets
         self.hiddenwidgets = {}
 
         self.main.create_training_data_button.bind("<Button>", self.prepare_training_data)
-        self.main.create_model_button.bind("<Button>", self.create_model)
+        self.main.normalize_model_button.bind("<Button>", self.normalize_model)
         self.main.train_model_button.bind("<Button>", self.train_model_routine)
-        self.main.save_model_button.bind("<Button>", self.save_model)
-        self.main.load_model_button.bind("<Button>", self.load_model)
+
+        self.main.save_training_data_button.bind("<Button>", self.save_model_training_data)
+        self.main.save_normalized_model_button.bind("<Button>", self.save_normalized_model)
+        self.main.save_trained_model_button.bind("<Button>", self.save_trained_model)
+
+        self.main.load_training_data_button.bind("<Button>", self.load_model_training_data)
+        self.main.load_normalized_model_button.bind("<Button>", self.load_normalized_model)
+        self.main.load_trained_model_button.bind("<Button>", self.load_trained_model)
+
         self.main.quitButton.bind("<Button>", self.closeprogram)
 
     def hide_instance_attribute(self, instance_attribute, widget_variablename):
@@ -263,17 +332,29 @@ class View(Publisher, Subscriber):
     def prepare_training_data(self, event):
         self.dispatch("prepare_training_data", "prepare_training_data clicked! Notify subscriber!")
 
-    def create_model(self, event):
-        self.dispatch("create_model", "create_model clicked! Notify subscriber!")
-
     def train_model_routine(self, event):
         self.dispatch("train_model_routine", "train_model_routines clicked! Notify subscriber!")
 
-    def save_model(self, event):
-        self.dispatch("save_model", "save_model clicked! Notify subscriber!")
+    def normalize_model(self, event):
+        self.dispatch("normalize_model_routine", "normalize_model clicked! Notify subscriber!")
 
-    def load_model(self, event):
-        self.dispatch("load_model", "load_model clicked! Notify subscriber!")
+    def save_model_training_data(self, event):
+        self.dispatch("save_model_training_data", "save_model clicked! Notify subscriber!")
+
+    def save_normalized_model(self, event):
+        self.dispatch("save_normalized_model", "save_normalized_model clicked! Notify subscriber!")
+
+    def save_trained_model(self, event):
+        self.dispatch("save_trained_model", "save_trained_model clicked! Notify subscriber!")
+
+    def load_model_training_data(self, event):
+        self.dispatch("load_model_training_data", "load_model_training_data clicked! Notify subscriber!")
+
+    def load_normalized_model(self, event):
+        self.dispatch("load_normalized_model", "load_normalized_model clicked! Notify subscriber!")
+
+    def load_trained_model(self, event):
+        self.dispatch("load_trained_model", "load_trained_model clicked! Notify subscriber!")
 
     def closeprogram(self, event):
         self.dispatch("close_button", "quit button clicked! Notify subscriber!")
@@ -321,33 +402,47 @@ class Main(tk.Frame):
         self.output_path.insert(0,'E:/OneDrive/1_Daten_Dokumente_Backup/1_Laptop_Backup_PC/Programmieren_Python/algorithmn/Algorithmen/ML/ML_Tests')
         self.output_path.grid(row = 3, column = 0, sticky = tk.N, pady = 2, columnspan = 4)
 
-        #button quit
-        self.quitButton = tk.Button(self.mainFrame, text="Quit", width=30, borderwidth=5, bg='#FBD975')
-        self.quitButton.grid(row = 7, column = 2, sticky = tk.N, pady = 0)
-
         #button create_training_data
         self.create_training_data_button = tk.Button(self.mainFrame, text="Create Training Data", width=30, borderwidth=5, bg='#FBD975')
         self.create_training_data_button.grid(row = 7, column = 1, sticky = tk.N, pady = 0)
 
-        #button create model_grey
-        self.create_model_button = tk.Button(self.mainFrame, text="Create Model", width=30, borderwidth=5, bg='#FBD975')
-        self.create_model_button.grid(row = 8, column = 1, sticky = tk.N, pady = 0)
-
         #button save model_grey
+        self.save_training_data_button = tk.Button(self.mainFrame, text="Save Training Data", width=30, borderwidth=5, bg='#FBD975')
+        self.save_training_data_button.grid(row = 7, column = 2, sticky = tk.N, pady = 0)
+
+        #button load model_grey
+        self.load_training_data_button = tk.Button(self.mainFrame, text="Load Training Data", width=30, borderwidth=5, bg='#FBD975')
+        self.load_training_data_button.grid(row = 8, column = 2, sticky = tk.N, pady = 0)
+
+        #button normalize model_grey
+        self.normalize_model_button = tk.Button(self.mainFrame, text="Normalize Model", width=30, borderwidth=5, bg='#FBD975')
+        self.normalize_model_button.grid(row = 9, column = 1, sticky = tk.N, pady = 0)
+
+        #button save norm model_grey
+        self.save_normalized_model_button = tk.Button(self.mainFrame, text="Save Normalize Model", width=30, borderwidth=5, bg='#FBD975')
+        self.save_normalized_model_button.grid(row = 9, column = 2, sticky = tk.N, pady = 0)
+
+        #button save norm model_grey
+        self.load_normalized_model_button = tk.Button(self.mainFrame, text="Load Normalize Model", width=30, borderwidth=5, bg='#FBD975')
+        self.load_normalized_model_button.grid(row = 10, column = 2, sticky = tk.N, pady = 0)
+
+        #button train model_grey
         self.train_model_button = tk.Button(self.mainFrame, text="Train Model", width=30, borderwidth=5, bg='#FBD975')
-        self.train_model_button.grid(row = 10, column = 1, sticky = tk.N, pady = 0)
+        self.train_model_button.grid(row = 11, column = 1, sticky = tk.N, pady = 0)
 
-        #button create model_grey
-        self.save_model_button = tk.Button(self.mainFrame, text="Save Model", width=30, borderwidth=5, bg='#FBD975')
-        self.save_model_button.grid(row = 9, column = 1, sticky = tk.N, pady = 0)
+        #button save trained model_grey
+        self.save_trained_model_button = tk.Button(self.mainFrame, text="Save Trained Model", width=30, borderwidth=5, bg='#FBD975')
+        self.save_trained_model_button.grid(row = 11, column = 2, sticky = tk.N, pady = 0)
 
-        #button save model_grey
-        self.train_model_button = tk.Button(self.mainFrame, text="Train Model", width=30, borderwidth=5, bg='#FBD975')
-        self.train_model_button.grid(row = 10, column = 1, sticky = tk.N, pady = 0)
+        #button save trained model_grey
+        self.load_trained_model_button = tk.Button(self.mainFrame, text="Load Trained Model", width=30, borderwidth=5, bg='#FBD975')
+        self.load_trained_model_button.grid(row = 12, column = 2, sticky = tk.N, pady = 0)
 
-        #button save model_grey
-        self.load_model_button = tk.Button(self.mainFrame, text="Load Model", width=30, borderwidth=5, bg='#FBD975')
-        self.load_model_button.grid(row = 11, column = 1, sticky = tk.N, pady = 0)
+        #button quit
+        self.quitButton = tk.Button(self.mainFrame, text="Quit", width=30, borderwidth=5, bg='#FBD975')
+        self.quitButton.grid(row = 13, column = 2, sticky = tk.N, pady = 0)
+
+
 
 
 class InfoBottomPanel(tk.Frame):
