@@ -6,6 +6,7 @@ import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 # np.set_printoptions(threshold=sys.maxsize)
 from sklearn.decomposition import PCA
 from matplotlib.figure import Figure
@@ -175,18 +176,19 @@ async def normalize_model_grey(input_data_grey):
     model_grey = Sequential()
     # model_grey_x = tf.random.normal(input_data_grey["x"])
     # model_grey_y = tf.keras.layers.Conv2D(2, 3, activation='relu', input_shape=input_data_grey["x"][1:])(input_data_grey["x"])
-    model_grey.add(Conv2D(256, (3, 3), input_shape=input_data_grey["x"].shape[1:]))
+    model_grey.add(Conv2D(filters=128, kernel_size=(3, 3), input_shape=input_data_grey["x"].shape[1:]))
     model_grey.add(Activation('relu'))
     model_grey.add(MaxPooling2D(pool_size=(2, 2)))
 
-    model_grey.add(Conv2D(256, (3, 3)))
+    model_grey.add(Conv2D(filters=128, kernel_size=(3, 3)))
+    model_grey.add(Activation('relu'))
+    model_grey.add(MaxPooling2D(pool_size=(2, 2)))
+
+    model_grey.add(Conv2D(filters=128, kernel_size=(3, 3)))
     model_grey.add(Activation('relu'))
     model_grey.add(MaxPooling2D(pool_size=(2, 2)))
 
     model_grey.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
-
-    model_grey.add(Dense(64))
-    model_grey.add(Activation('relu'))
 
     model_grey.add(Dense(1))
     model_grey.add(Activation('sigmoid'))
@@ -215,17 +217,20 @@ async def normalize_model_rgb(input_data_rgb):
     print("---------------------------")
 
     model_rgb = Sequential()
-    model_rgb.add(Conv2D(64, (3, 3), input_shape=input_data_rgb["x"].shape[1:]))
+    model_rgb.add(Conv2D(filters=256, kernel_size=(3, 3), input_shape=input_data_rgb["x"].shape[1:]))
     model_rgb.add(Activation('relu'))
     model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
 
-    model_rgb.add(Conv2D(64, (2, 3)))
+    model_rgb.add(Conv2D(filters=256, kernel_size=(3, 3)))
+    model_rgb.add(Activation('relu'))
+    model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
+
+    model_rgb.add(Conv2D(filters=256, kernel_size=(3, 3)))
     model_rgb.add(Activation('relu'))
     model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
 
     model_rgb.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
-
-    model_rgb.add(Dense(64))
+    model_rgb.add(Dense(128))
     model_rgb.add(Activation('relu'))
 
     model_rgb.add(Dense(1))
@@ -239,7 +244,7 @@ async def normalize_model_rgb(input_data_rgb):
 
 async def train_model_grey(input_data_grey, model):
     print("input_data_grey[x]: {} \n".format(input_data_grey["x"].shape))
-    tensorboard_grey = TensorBoard(log_dir="logs/{}".format(NAME + "_grey"))
+    tensorboard_grey = TensorBoard(log_dir="logs/{}".format(NAME + str(time.time()) + "_grey"))
 
     model.compile(loss='binary_crossentropy',
                                       optimizer='adam',
@@ -254,7 +259,7 @@ async def train_model_grey(input_data_grey, model):
 
 async def train_model_rgb(input_data_rgb, model):
     print("input_data_rgb[x]:  {} \n".format(input_data_rgb["x"].shape))
-    tensorboard_rgb = TensorBoard(log_dir="logs/{}".format(NAME + "_rgb"))
+    tensorboard_rgb = TensorBoard(log_dir="logs/{}".format(NAME + str(time.time()) +  "_rgb"))
 
     model.compile(loss='binary_crossentropy',
                             optimizer='adam',
