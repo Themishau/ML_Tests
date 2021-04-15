@@ -24,9 +24,13 @@ from tensorflow.keras.models import load_model
 
 import pickle
 # tensorboard --logdir=logs/
-NAME = "CNN_FHDW"
 IMG_SIZE = 125
 _globalgpu = None
+
+batch_size = [32, 8]
+dense_layers = [0,1,2]
+layer_sizes = [32, 64, 128]
+conv_layers = [1, 2, 3]
 
 
 def set_gpu():
@@ -42,7 +46,8 @@ def set_gpu():
             # Memory growth must be set before GPUs have been initialized
             print(e)
 
-def init_gpu():
+
+async def init_gpu():
     # set GPU memory which can be used for object detection
     config = tf.compat.v1.ConfigProto(gpu_options=
                                       tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.7)
@@ -51,6 +56,7 @@ def init_gpu():
     # config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
     globalgpu = tf.compat.v1.Session(config=config)
+    print("Num GPUs Available TEST: ", len(tf.config.experimental.list_physical_devices('GPU')))
     return globalgpu
 
 
@@ -165,111 +171,47 @@ async def prepare_training_data_np(training_data_grey, training_data_rgb):
     model_rgb = {"x": X_train_rgb,
                  "y": y_rgb}
 
+    model_grey["x"] = await standardize(model_grey["x"])
+    model_rgb["x"] = await standardize(model_rgb["x"])
+
     return model_grey, model_rgb
 
 
-async def normalize_model_grey(input_data_grey):
+async def normalize_model(input_data, layer_s, dense_c, conv_layer_c):
+    model = Sequential()
+    model.add(Conv2D(filters=layer_s, kernel_size=(3, 3), input_shape=input_data["x"].shape[1:]))
+    model.add(Activation('relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    for l in range(conv_layer_c - 1):
+        model.add(Conv2D(filters=layer_s, kernel_size=(3, 3)))
+        model.add(Activation('relu'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
 
-    print("---------------------------")
-    print("---------------------------")
-    input_data_grey["x"] = await standardize(input_data_grey["x"])
-    model_grey = Sequential()
-    # model_grey_x = tf.random.normal(input_data_grey["x"])
-    # model_grey_y = tf.keras.layers.Conv2D(2, 3, activation='relu', input_shape=input_data_grey["x"][1:])(input_data_grey["x"])
-    model_grey.add(Conv2D(filters=128, kernel_size=(3, 3), input_shape=input_data_grey["x"].shape[1:]))
-    model_grey.add(Activation('relu'))
-    model_grey.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
+    for _ in range(dense_c):
+        model.add(Dense(layer_s))
+        model.add(Activation('relu'))
 
-    model_grey.add(Conv2D(filters=128, kernel_size=(3, 3)))
-    model_grey.add(Activation('relu'))
-    model_grey.add(MaxPooling2D(pool_size=(2, 2)))
-
-    model_grey.add(Conv2D(filters=128, kernel_size=(3, 3)))
-    model_grey.add(Activation('relu'))
-    model_grey.add(MaxPooling2D(pool_size=(2, 2)))
-
-    model_grey.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
-
-    model_grey.add(Dense(1))
-    model_grey.add(Activation('sigmoid'))
-
-    data = {"x": input_data_grey["x"],
-            "y": input_data_grey["y"]}
-
-
-    return data, model_grey
-
-
-async def normalize_model_rgb(input_data_rgb):
-    ################################
-    # print("-------------normalize--------------")
-    # print(await normalize(input_data_rgb["x"]))
-    input_data_rgb["x"] = await standardize(input_data_rgb["x"])
-    # print("---------------------------")
-    # print("-------------input_data_rgb--------------")
-    # print(input_data_rgb["x"])
-
-    print("---------------------------")
-    print("---------------------------")
-    print("inputshape: {} \n "
-          "shape.[1:]: {}".format(input_data_rgb["x"].shape, input_data_rgb["x"].shape[1:]))
-    print("---------------------------")
-    print("---------------------------")
-
-    model_rgb = Sequential()
-    model_rgb.add(Conv2D(filters=256, kernel_size=(3, 3), input_shape=input_data_rgb["x"].shape[1:]))
-    model_rgb.add(Activation('relu'))
-    model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
-
-    model_rgb.add(Conv2D(filters=256, kernel_size=(3, 3)))
-    model_rgb.add(Activation('relu'))
-    model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
-
-    model_rgb.add(Conv2D(filters=256, kernel_size=(3, 3)))
-    model_rgb.add(Activation('relu'))
-    model_rgb.add(MaxPooling2D(pool_size=(2, 2)))
-
-    model_rgb.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
-    model_rgb.add(Dense(128))
-    model_rgb.add(Activation('relu'))
-
-    model_rgb.add(Dense(1))
-    model_rgb.add(Activation('sigmoid'))
-
-    data = {"x": input_data_rgb["x"],
-            "y": input_data_rgb["y"]}
-
-    return data, model_rgb
-
-
-async def train_model_grey(input_data_grey, model):
-    print("input_data_grey[x]: {} \n".format(input_data_grey["x"].shape))
-    tensorboard_grey = TensorBoard(log_dir="logs/{}".format(NAME + str(time.time()) + "_grey"))
-
-    model.compile(loss='binary_crossentropy',
-                                      optimizer='adam',
-                                      metrics=['accuracy'])
-
-    model.fit(input_data_grey["x"],
-                   input_data_grey["y"],
-                   batch_size=32, epochs=10, validation_split=0.3, callbacks=[tensorboard_grey])
-    print("grey done")
-    return model
-
-
-async def train_model_rgb(input_data_rgb, model):
-    print("input_data_rgb[x]:  {} \n".format(input_data_rgb["x"].shape))
-    tensorboard_rgb = TensorBoard(log_dir="logs/{}".format(NAME + str(time.time()) +  "_rgb"))
+    model.add(Dense(1))
+    model.add(Activation('sigmoid'))
 
     model.compile(loss='binary_crossentropy',
                             optimizer='adam',
                             metrics=['accuracy'])
-    model.fit(input_data_rgb["x"],
-                  input_data_rgb["y"],
-                  batch_size=32, epochs=10, validation_split=0.3, callbacks=[tensorboard_rgb])
-    print("rgb done")
-
     return model
+
+
+async def train_model(input_data, model, batch_s, name, NAME):
+    print("input_data[x]: {} \n".format(input_data["x"].shape))
+    tensorboard = TensorBoard(log_dir="logs/{}".format(NAME + str(time.time()) + "_" + name))
+
+    model.fit(input_data["x"],
+              input_data["y"],
+              batch_size=batch_s, epochs=10, validation_split=0.25, callbacks=[tensorboard])
+    print("{} done".format(name))
+    return model
+
+
 
 
 #### save and load methods ####
@@ -282,11 +224,7 @@ async def save_model_training_data(model, name):
         pickle.dump(model["y"], pickle_out)
 
 
-async def save_normalized_model(model, data, name):
-    with open("{}_normalized_x.pickle".format(name), "wb") as pickle_out:
-        pickle.dump(data["x"], pickle_out)
-    with open("{}_normalized_y.pickle".format(name), "wb") as pickle_out:
-        pickle.dump(data["y"], pickle_out)
+async def save_normalized_model(model, name):
     model.save('{}_normalized_model.h5'.format(name))
 
 
@@ -308,10 +246,10 @@ async def load_model_training_data(name):
 
 
 async def load_normalized_model(name):
-    with open("{}_normalized_x.pickle".format(name), "rb") as pickle_in:
+    with open("{}_training_x.pickle".format(name), "rb") as pickle_in:
         x = pickle.load(pickle_in)
 
-    with open("{}_normalized_y.pickle".format(name), "rb") as pickle_in:
+    with open("{}_training_y.pickle".format(name), "rb") as pickle_in:
         y = pickle.load(pickle_in)
 
     model = load_model('{}_normalized_model.h5'.format(name))

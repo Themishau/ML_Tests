@@ -3,9 +3,11 @@ import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
 from Analyzer import create_training_data_grey, create_training_data_rgb, shuffle_training_data
-from Analyzer import prepare_training_data_np, normalize_model_grey, normalize_model_rgb, train_model_grey, train_model_rgb
+from Analyzer import prepare_training_data_np, normalize_model, train_model
 from Analyzer import save_model_training_data, load_normalized_model, load_trained_model, init_gpu
 from Analyzer import save_trained_model, save_normalized_model, load_model_training_data
+from Analyzer import layer_sizes, dense_layers, conv_layers, batch_size
+
 from observer import Publisher, Subscriber
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import asyncio
@@ -32,9 +34,10 @@ class Model(Publisher):
 
         self.processing = None
 
-    def restart_session(self):
+    async def restart_session(self):
         self.gpu_session.close()
-        self.gpu_session = init_gpu()
+        self.gpu_session = await init_gpu()
+        time.sleep(5)
 
     def clearData(self):
         self.input_data = None
@@ -76,16 +79,22 @@ class Model(Publisher):
             messagebox.showerror('Error', 'no training data available')
 
     async def normalize_model(self):
-        self.restart_session()
-        self.training_data_grey, self.model_grey = await normalize_model_grey(self.training_data_grey)
-        self.restart_session()
-        self.training_data_rgb, self.model_rgb = await normalize_model_rgb(self.training_data_rgb)
+        layer_size = 64
+        dense_layer = 1
+        conv_layer = 2
+        await self.restart_session()
+        self.model_grey = await normalize_model(self.training_data_grey, layer_size, dense_layer, conv_layer)
+        await self.restart_session()
+        self.model_rgb = await normalize_model(self.training_data_rgb, layer_size, dense_layer, conv_layer)
 
     async def train_model(self):
-        self.restart_session()
-        self.model_grey = await train_model_grey(self.training_data_grey, self.model_grey)
-        self.restart_session()
-        self.model_rgb = await train_model_rgb(self.training_data_rgb, self.model_rgb)
+        batch_s = 16
+        NAME = 'grey'
+        await self.restart_session()
+        self.model_grey = await train_model(self.training_data_grey, self.model_grey, batch_s, NAME, 'grey')
+        NAME = 'rgb'
+        await self.restart_session()
+        self.model_rgb = await train_model(self.training_data_rgb, self.model_rgb, batch_s, NAME, 'rgb')
 
     async def prepare_training_data(self, name):
         await self.set_process(name)
@@ -116,8 +125,8 @@ class Model(Publisher):
     async def save_normalized_model(self, name):
         if self.model_rgb is not None:
             await self.set_process(name)
-            await save_normalized_model(self.model_grey, self.training_data_grey, 'grey')
-            await save_normalized_model(self.model_rgb, self.training_data_rgb, 'rgb')
+            await save_normalized_model(self.model_grey, 'grey')
+            await save_normalized_model(self.model_rgb, 'rgb')
             await self.delete_process()
         else:
             messagebox.showerror('Error', 'no model_grey available')
@@ -170,6 +179,31 @@ class Model(Publisher):
         self.dispatch("data_changed", "{} finished".format(self.processing))
         self.processing = None
 
+    async def multiple_model_testing(self, name):
+        # await self.set_process(name + "_grey")
+        # for dense_layer in dense_layers:
+        #     for layer_size in layer_sizes:
+        #         for conv_layer in conv_layers:
+        #             for batches in batch_size:
+        #                 NAME = "{}-conv-{}-nodes-{}-dense-{}-batch-{}_Grey".format(conv_layer, layer_size, dense_layer, batches, int(time.time()))
+        #                 print(NAME)
+        #                 await self.restart_session()
+        #                 self.model_grey = await normalize_model(self.training_data_grey, layer_size, dense_layer, conv_layer)
+        #                 await self.restart_session()
+        #                 self.model_grey = await train_model(self.training_data_grey, self.model_grey, batches, NAME, 'grey')
+
+        await self.set_process(name + "_rgb")
+        for dense_layer in dense_layers:
+            for layer_size in layer_sizes:
+                for conv_layer in conv_layers:
+                    for batches in batch_size:
+                        NAME = "{}-conv-{}-nodes-{}-dense-{}-batch-{}_RGB".format(conv_layer, layer_size, dense_layer, batches, int(time.time()))
+                        print(NAME)
+                        await self.restart_session()
+                        self.model_rgb = await normalize_model(self.training_data_rgb, layer_size, dense_layer, conv_layer)
+                        await self.restart_session()
+                        self.model_rgb = await train_model(self.training_data_rgb, self.model_rgb, batches, NAME, 'rgb')
+        await self.delete_process()
 
 class Controller(Subscriber):
     def __init__(self, name):
@@ -196,6 +230,7 @@ class Controller(Subscriber):
                                                  'load_model_training_data',
                                                  'load_normalized_model',
                                                  'load_trained_model',
+                                                 'multiple_model_testing',
                                                  'close_button'], 'viewer')
 
         #init Observer
@@ -206,6 +241,8 @@ class Controller(Subscriber):
         self.view.register('save_model_training_data', self)  # Achtung, sich selbst angeben und nicht self.controller
         self.view.register('save_normalized_model', self)  # Achtung, sich selbst angeben und nicht self.controller
         self.view.register('save_trained_model', self)  # Achtung, sich selbst angeben und nicht self.controller
+
+        self.view.register('multiple_model_testing', self)
 
         self.view.register('load_model_training_data', self)
         self.view.register('load_normalized_model', self)
@@ -295,10 +332,12 @@ class View(Publisher, Subscriber):
         self.main.create_training_data_button.bind("<Button>", self.prepare_training_data)
         self.main.normalize_model_button.bind("<Button>", self.normalize_model)
         self.main.train_model_button.bind("<Button>", self.train_model_routine)
+        self.main.multiple_model_testing_button.bind("<Button>", self.multiple_model_testing)
 
         self.main.save_training_data_button.bind("<Button>", self.save_model_training_data)
         self.main.save_normalized_model_button.bind("<Button>", self.save_normalized_model)
         self.main.save_trained_model_button.bind("<Button>", self.save_trained_model)
+
 
         self.main.load_training_data_button.bind("<Button>", self.load_model_training_data)
         self.main.load_normalized_model_button.bind("<Button>", self.load_normalized_model)
@@ -337,6 +376,9 @@ class View(Publisher, Subscriber):
 
     def normalize_model(self, event):
         self.dispatch("normalize_model_routine", "normalize_model clicked! Notify subscriber!")
+
+    def multiple_model_testing(self, event):
+        self.dispatch("multiple_model_testing", "multiple_model_testing clicked! Notify subscriber!")
 
     def save_model_training_data(self, event):
         self.dispatch("save_model_training_data", "save_model clicked! Notify subscriber!")
@@ -418,6 +460,10 @@ class Main(tk.Frame):
         self.normalize_model_button = tk.Button(self.mainFrame, text="Normalize Model", width=30, borderwidth=5, bg='#FBD975')
         self.normalize_model_button.grid(row = 9, column = 1, sticky = tk.N, pady = 0)
 
+        #button  multiple_model_testing_button
+        self.multiple_model_testing_button = tk.Button(self.mainFrame, text="multiple_model_testing", width=30, borderwidth=5, bg='#FBD975')
+        self.multiple_model_testing_button.grid(row = 13, column = 1, sticky = tk.N, pady = 0)
+
         #button save norm model_grey
         self.save_normalized_model_button = tk.Button(self.mainFrame, text="Save Normalize Model", width=30, borderwidth=5, bg='#FBD975')
         self.save_normalized_model_button.grid(row = 9, column = 2, sticky = tk.N, pady = 0)
@@ -440,7 +486,7 @@ class Main(tk.Frame):
 
         #button quit
         self.quitButton = tk.Button(self.mainFrame, text="Quit", width=30, borderwidth=5, bg='#FBD975')
-        self.quitButton.grid(row = 13, column = 2, sticky = tk.N, pady = 0)
+        self.quitButton.grid(row = 15, column = 2, sticky = tk.N, pady = 0)
 
 
 
