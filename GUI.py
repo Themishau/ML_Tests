@@ -7,6 +7,7 @@ from Analyzer import prepare_training_data_np, normalize_model, train_model
 from Analyzer import save_model_training_data, load_normalized_model, load_trained_model, init_gpu
 from Analyzer import save_trained_model, save_normalized_model, load_model_training_data
 from Analyzer import layer_sizes, dense_layers, conv_layers, batch_size
+from Analyzer import prepare_images_to_test, load_trained_model_only
 
 from observer import Publisher, Subscriber
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -32,7 +33,31 @@ class Model(Publisher):
         self.model_grey = None
         self.model_rgb = None
 
+        self.filepath = None
         self.processing = None
+
+        self.predict_data = None
+        self.loaded_model = None
+
+        self.pred_model_path = None
+
+    async def start_prediction_routine(self, name):
+        await self.restart_session()
+        self.predict_data = await prepare_images_to_test(self.filepath)
+        self.loaded_model = await load_trained_model_only(self.pred_model_path)
+        await self.predict_model()
+
+    async def predict_model(self):
+        # for image in self.predict_data:
+        #     prediction = self.model_rgb.predict([image])
+        #     print(prediction)  # will be a list in a list.
+        #     print(CATEGORIES[int(prediction[0][0])])
+        for pred in self.predict_data:
+            prediction = self.loaded_model.predict([pred[0]])
+            print('img: {} is: {}'.format(pred[1], self.categories[int(prediction[0][0])]))
+            print()
+        # for pred in prediction:
+        #     print(self.categories[pred])
 
     async def restart_session(self):
         self.gpu_session.close()
@@ -79,21 +104,22 @@ class Model(Publisher):
             messagebox.showerror('Error', 'no training data available')
 
     async def normalize_model(self):
-        layer_size = 64
-        dense_layer = 1
-        conv_layer = 2
-        await self.restart_session()
-        self.model_grey = await normalize_model(self.training_data_grey, layer_size, dense_layer, conv_layer)
+        layer_size = 32
+        dense_layer = 0
+        conv_layer = 3
+        # await self.restart_session()
+        # self.model_grey = await normalize_model(self.training_data_grey, layer_size, dense_layer, conv_layer)
         await self.restart_session()
         self.model_rgb = await normalize_model(self.training_data_rgb, layer_size, dense_layer, conv_layer)
 
     async def train_model(self):
-        batch_s = 16
-        NAME = 'grey'
-        await self.restart_session()
-        self.model_grey = await train_model(self.training_data_grey, self.model_grey, batch_s, NAME, 'grey')
+        batch_s = 32
+        # NAME = 'grey'
+        # await self.restart_session()
+        # self.model_grey = await train_model(self.training_data_grey, self.model_grey, batch_s, NAME, 'grey')
         NAME = 'rgb'
         await self.restart_session()
+        time.sleep(5)
         self.model_rgb = await train_model(self.training_data_rgb, self.model_rgb, batch_s, NAME, 'rgb')
 
     async def prepare_training_data(self, name):
@@ -213,7 +239,7 @@ class Controller(Subscriber):
         self.root = tk.Tk()
 
         #init window size
-        self.root.geometry("550x650+200+200")
+        self.root.geometry("485x750+200+200")
         self.root.resizable(0, 0)
         #counts running threads
         self.runningAsync = 0
@@ -231,6 +257,7 @@ class Controller(Subscriber):
                                                  'load_normalized_model',
                                                  'load_trained_model',
                                                  'multiple_model_testing',
+                                                 'start_prediction_routine',
                                                  'close_button'], 'viewer')
 
         #init Observer
@@ -242,12 +269,12 @@ class Controller(Subscriber):
         self.view.register('save_normalized_model', self)  # Achtung, sich selbst angeben und nicht self.controller
         self.view.register('save_trained_model', self)  # Achtung, sich selbst angeben und nicht self.controller
 
-        self.view.register('multiple_model_testing', self)
-
         self.view.register('load_model_training_data', self)
         self.view.register('load_normalized_model', self)
         self.view.register('load_trained_model', self)
 
+        self.view.register('multiple_model_testing', self)
+        self.view.register('start_prediction_routine', self)
         self.view.register('close_button', self)
 
         #init Observer
@@ -267,7 +294,17 @@ class Controller(Subscriber):
             except FileNotFoundError:
                 messagebox.showerror('Error', 'no output path')
                 return
-            self.do_tasks(event)
+        elif event == 'start_prediction_routine':
+            try:
+                self.model.filepath = self.view.main.input_image_dir_path.get()
+            except FileNotFoundError:
+                messagebox.showerror('Error', 'no input path')
+                return
+            try:
+                self.model.pred_model_path = self.view.main.input_model_path.get()
+            except FileNotFoundError:
+                messagebox.showerror('Error', 'no output path')
+                return
 
         if event == 'close_button':
             self.closeprogram(event)
@@ -333,6 +370,7 @@ class View(Publisher, Subscriber):
         self.main.normalize_model_button.bind("<Button>", self.normalize_model)
         self.main.train_model_button.bind("<Button>", self.train_model_routine)
         self.main.multiple_model_testing_button.bind("<Button>", self.multiple_model_testing)
+        self.main.start_prediction_button.bind("<Button>", self.start_prediction_routine)
 
         self.main.save_training_data_button.bind("<Button>", self.save_model_training_data)
         self.main.save_normalized_model_button.bind("<Button>", self.save_normalized_model)
@@ -379,6 +417,9 @@ class View(Publisher, Subscriber):
 
     def multiple_model_testing(self, event):
         self.dispatch("multiple_model_testing", "multiple_model_testing clicked! Notify subscriber!")
+
+    def start_prediction_routine(self, event):
+        self.dispatch("start_prediction_routine", "start_prediction_routine clicked! Notify subscriber!")
 
     def save_model_training_data(self, event):
         self.dispatch("save_model_training_data", "save_model clicked! Notify subscriber!")
@@ -488,7 +529,29 @@ class Main(tk.Frame):
         self.quitButton = tk.Button(self.mainFrame, text="Quit", width=30, borderwidth=5, bg='#FBD975')
         self.quitButton.grid(row = 15, column = 2, sticky = tk.N, pady = 0)
 
+        #### test model ####
 
+        #textfield
+        self.input_model = tk.Label(self.mainFrame, text="Enter input path to model ")
+        self.input_model.grid(row = 16, column = 0, sticky = tk.N, pady = 2, columnspan = 4)
+
+        #entry
+        self.input_model_path = tk.Entry(self.mainFrame, width=80)
+        self.input_model_path.insert(0, 'rgb_trained_model_d.h5')
+        self.input_model_path.grid(row = 17, column = 0, sticky = tk.N, pady = 2, columnspan = 4)
+
+        #textfield
+        self.input_image_dir = tk.Label(self.mainFrame, text="Enter input path ")
+        self.input_image_dir.grid(row = 18, column = 0, sticky = tk.N, pady = 2, columnspan = 4)
+
+        #entry
+        self.input_image_dir_path = tk.Entry(self.mainFrame, width=80)
+        self.input_image_dir_path.insert(0, 'predict/')
+        self.input_image_dir_path.grid(row = 19, column = 0, sticky = tk.N, pady = 2, columnspan = 4)
+
+        #button save norm model_grey
+        self.start_prediction_button = tk.Button(self.mainFrame, text="start_prediction_button", width=30, borderwidth=5, bg='#FBD975')
+        self.start_prediction_button.grid(row = 20, column = 1, sticky = tk.N, pady = 0)
 
 
 class InfoBottomPanel(tk.Frame):

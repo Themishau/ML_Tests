@@ -85,6 +85,26 @@ async def normalize(model):
     return model_trans
 
 
+async def prepare_images_to_test(filepath):
+    data = []
+    path = os.path.join(filepath)
+    for img in os.listdir(path):
+        try:
+            # convert it to greyscale, so we have a less complex data set
+            # 2d array is easier to work with in this particular case
+            img_array_rbg = cv2.imread(os.path.join(path, img))
+            # resize and normalize the image
+            new_array_rgb = cv2.resize(img_array_rbg, (IMG_SIZE, IMG_SIZE))
+            new_array_rgb.reshape(-1, IMG_SIZE, IMG_SIZE, 3)
+            new_array_rgb = np.reshape(new_array_rgb, (-1, new_array_rgb.shape[1], new_array_rgb.shape[1], 3))
+            data.append([new_array_rgb, img])
+        except Exception as e:
+            pass
+    # data = await standardize(data)
+    return data
+
+
+
 async def create_training_data_grey(categories, data_path):
     training_data_grey = []
     for category in categories:
@@ -186,6 +206,7 @@ async def normalize_model(input_data, layer_s, dense_c, conv_layer_c):
         model.add(Conv2D(filters=layer_s, kernel_size=(3, 3)))
         model.add(Activation('relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Dropout(0.2)) # improves val_loss value!
 
     model.add(Flatten())  # this converts our 3D feature maps to 1D feature vectors
     for _ in range(dense_c):
@@ -207,7 +228,7 @@ async def train_model(input_data, model, batch_s, name, NAME):
 
     model.fit(input_data["x"],
               input_data["y"],
-              batch_size=batch_s, epochs=10, validation_split=0.25, callbacks=[tensorboard])
+              batch_size=batch_s, epochs=50, validation_split=0.25, callbacks=[tensorboard])
     print("{} done".format(name))
     return model
 
@@ -261,6 +282,10 @@ async def load_normalized_model(name):
 
     return model, data
 
+async def load_trained_model_only(path):
+    print(path)
+    model = load_model(path)
+    return model
 
 async def load_trained_model(name):
     with open("{}_normalized_x.pickle".format(name), "rb") as pickle_in:
