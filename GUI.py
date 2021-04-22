@@ -142,8 +142,14 @@ class Model(Publisher):
     async def save_model_training_data(self, name):
         if self.training_data_grey is not None:
             await self.set_process(name)
-            await save_model_training_data(self.training_data_grey, "grey")
-            await save_model_training_data(self.training_data_rgb, "rgb")
+            try:
+                await save_model_training_data(self.training_data_grey, "grey")
+            except AttributeError as e:
+                print(e)
+            try:
+                await save_model_training_data(self.training_data_rgb, "rgb")
+            except AttributeError as e:
+                print(e)
             await self.delete_process()
         else:
             messagebox.showerror('Error', 'no model_grey available')

@@ -21,9 +21,11 @@ from tensorflow.keras.layers import Conv2D, MaxPooling2D
 from tensorflow.keras.layers.experimental.preprocessing import Normalization
 from tensorflow.keras.callbacks import TensorBoard
 from tensorflow.keras.models import load_model
-
 import pickle
+
 # tensorboard --logdir=logs/
+
+
 IMG_SIZE = 125
 _globalgpu = None
 
@@ -165,7 +167,6 @@ async def prepare_training_data_np(training_data_grey, training_data_rgb):
 
     # print(np.array(X))
 
-
     # Reduktion der "Dimensionen" eines Arrays für die
     # (24946, 125, 125)
     # 24946 Bilder, die 125 x 125 groß sind. (mit einem color channel S/W)
@@ -180,10 +181,6 @@ async def prepare_training_data_np(training_data_grey, training_data_rgb):
     # print(X_train.reshape(X_train, (X_train.shape[1], X_train.shape[2], -1)))
     print(X_train_grey.shape)
     print(X_train_rgb.shape)
-
-    # x = np.array(x).reshape(-1, IMG_SIZE, IMG_SIZE, 1)
-
-    # print(np.array(x).reshape(-1, shape=(IMG_SIZE, IMG_SIZE), 1))
 
     model_grey = {"x": X_train_grey,
                   "y": y_grey}
@@ -224,11 +221,12 @@ async def normalize_model(input_data, layer_s, dense_c, conv_layer_c):
 
 async def train_model(input_data, model, batch_s, name, NAME):
     print("input_data[x]: {} \n".format(input_data["x"].shape))
+    time.sleep(5)
     tensorboard = TensorBoard(log_dir="logs/{}".format(NAME + str(time.time()) + "_" + name))
 
     model.fit(input_data["x"],
               input_data["y"],
-              batch_size=batch_s, epochs=50, validation_split=0.25, callbacks=[tensorboard])
+              batch_size=batch_s, epochs=500, validation_split=0.3, callbacks=[tensorboard])
     print("{} done".format(name))
     return model
 
@@ -236,7 +234,6 @@ async def train_model(input_data, model, batch_s, name, NAME):
 
 
 #### save and load methods ####
-
 async def save_model_training_data(model, name):
     with open("{}_training_x.pickle".format(name), "wb") as pickle_out:
         pickle.dump(model["x"], pickle_out)
@@ -250,7 +247,10 @@ async def save_normalized_model(model, name):
 
 
 async def save_trained_model(model, name):
-    model.save('{}_trained_model.h5'.format(name))
+    try:
+        model.save('{}_trained_model.h5'.format(name))
+    except AttributeError as e:
+        print(e)
 
 
 async def load_model_training_data(name):
@@ -282,10 +282,12 @@ async def load_normalized_model(name):
 
     return model, data
 
+
 async def load_trained_model_only(path):
     print(path)
     model = load_model(path)
     return model
+
 
 async def load_trained_model(name):
     with open("{}_normalized_x.pickle".format(name), "rb") as pickle_in:
