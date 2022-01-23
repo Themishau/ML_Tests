@@ -7,9 +7,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import time
-# np.set_printoptions(threshold=sys.maxsize)
-from sklearn.decomposition import PCA
-from matplotlib.figure import Figure
 from IPython import get_ipython
 from IPython.display import display
 import tensorflow as tf
@@ -23,8 +20,9 @@ from tensorflow.keras.callbacks import TensorBoard
 from tensorflow.keras.models import load_model
 import pickle
 
+# check all training data with tensorboard
 # tensorboard --logdir=logs/
-
+# .*rgb.*validation
 
 IMG_SIZE = 125
 _globalgpu = None
@@ -40,12 +38,12 @@ def set_gpu():
     if gpus:
         try:
             # Currently, memory growth needs to be the same across GPUs
+            # Memory growth must be set before GPUs have been initialized
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logical_gpus = tf.config.experimental.list_logical_devices('GPU')
             print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
         except RuntimeError as e:
-            # Memory growth must be set before GPUs have been initialized
             print(e)
 
 
@@ -72,7 +70,7 @@ async def standardize(model):
     # Z = (X - E(X)) / Standardabweichung // https://en.wikipedia.org/wiki/Standard_score
     mean = np.mean(model, axis=0)
     std = np.std(model, axis=0)
-    model_trans = model - mean # -= does not work because they need to be the same type
+    model_trans = model - mean # -= does not work because vars need to be the same type
     model_trans = model_trans / std
     # you want to save your mean and std for more data
     return model_trans
@@ -92,22 +90,22 @@ async def prepare_images_to_test(filepath):
     path = os.path.join(filepath)
     for img in os.listdir(path):
         try:
-            # convert it to greyscale, so we have a less complex data set
             # 2d array is easier to work with in this particular case
-            img_array_rbg = cv2.imread(os.path.join(path, img))
+            img_array = cv2.imread(os.path.join(path, img))
             # resize and normalize the image
-            new_array_rgb = cv2.resize(img_array_rbg, (IMG_SIZE, IMG_SIZE))
-            new_array_rgb.reshape(-1, IMG_SIZE, IMG_SIZE, 3)
-            new_array_rgb = np.reshape(new_array_rgb, (-1, new_array_rgb.shape[1], new_array_rgb.shape[1], 3))
-            data.append([new_array_rgb, img])
+            new_array = cv2.resize(img_array, (IMG_SIZE, IMG_SIZE))
+            new_array.reshape(-1, IMG_SIZE, IMG_SIZE, 3)
+            new_array = np.reshape(new_array, (-1, new_array.shape[1], new_array.shape[1], 3))
+            data.append([new_array, img])
+
         except Exception as e:
             pass
     # data = await standardize(data)
     return data
 
 
-
-async def create_training_data_grey(categories, data_path):
+# ab hier
+async def load_img_data_and_resize_grey(categories, data_path):
     training_data_grey = []
     for category in categories:
         path = os.path.join(data_path, category)
@@ -128,14 +126,14 @@ async def create_training_data_grey(categories, data_path):
     return training_data_grey
 
 
-async def create_training_data_rgb(categories, data_path):
+async def load_img_data_and_resize_rgb(categories, data_path):
     training_data_rbg = []
     for category in categories:
         path = os.path.join(data_path, category)
         class_index = categories.index(category)  # careful with the categoriy ( ex. cat first, dog second)
         for img in os.listdir(path):
             try:
-                # convert it to greyscale, so we have a less complex data set
+
                 # 2d array is easier to work with in this particular case
                 img_array_rbg = cv2.imread(os.path.join(path, img))
                 # resize and normalize the image
@@ -167,20 +165,20 @@ async def prepare_training_data_np(training_data_grey, training_data_rgb):
 
     # print(np.array(X))
 
-    # Reduktion der "Dimensionen" eines Arrays für die
+    # reduction of dimensions for the algorithm
     # (24946, 125, 125)
-    # 24946 Bilder, die 125 x 125 groß sind. (mit einem color channel S/W)
+    # 24946 imgs, size; 125 x 125; (one color channel S/W)
     X_train_grey = np.array(X_grey)
-
     X_train_grey = np.reshape(X_train_grey, (-1, X_train_grey.shape[1], X_train_grey.shape[2], 1))
-    # Reduktion der "Dimensionen" eines Arrays für die
+
+    # reduction of dimensions for the algorithm
     # (24946, 125, 125)
-    # 24946 Bilder, die 125 x 125 groß sind. (mit 3 color channel rgb)
+    # 24946 imgs, 125 x 125 (with three color channels)
     X_train_rgb = np.array(X_rgb)
     X_train_rgb = np.reshape(X_train_rgb, (-1, X_train_rgb.shape[1], X_train_rgb.shape[2], 3))
+
     # print(X_train.reshape(X_train, (X_train.shape[1], X_train.shape[2], -1)))
-    print(X_train_grey.shape)
-    print(X_train_rgb.shape)
+
 
     model_grey = {"x": X_train_grey,
                   "y": y_grey}
@@ -223,17 +221,16 @@ async def train_model(input_data, model, batch_s, name, NAME):
     print("input_data[x]: {} \n".format(input_data["x"].shape))
     time.sleep(5)
     tensorboard = TensorBoard(log_dir="logs/{}".format(NAME + str(time.time()) + "_" + name))
-
+    # if batch_size = 32 -> for 17500 samples; batch: 546.
+    # bei 10 Epochen wird 10 x durch das Dataset gegangen
     model.fit(input_data["x"],
               input_data["y"],
-              batch_size=batch_s, epochs=500, validation_split=0.3, callbacks=[tensorboard])
+              batch_size=batch_s, epochs=10, validation_split=0.3, callbacks=[tensorboard])
     print("{} done".format(name))
     return model
 
 
-
-
-#### save and load methods ####
+#### save and load function ####
 async def save_model_training_data(model, name):
     with open("{}_training_x.pickle".format(name), "wb") as pickle_out:
         pickle.dump(model["x"], pickle_out)
@@ -302,7 +299,3 @@ async def load_trained_model(name):
              }
 
     return model, data
-
-
-
-
